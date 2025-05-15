@@ -1,0 +1,50 @@
+# def get_random_word():
+#     with open("words.txt") as f:
+#         words = f.read().splitlines()
+#         return random.choice(words)
+    
+# def history():
+#     with open("words.txt") as f:
+#         words = f.read().splitlines()
+#     secret = get_random_word()
+#     for attempt in range(1, 501):
+#         guess = input(f"[{attempt}/6] Enter 5-letter guess: ").strip().lower()
+#         if len(guess) != 5 or guess not in words:
+#             print("  ↳ invalid guess; must be 5 lowercase letters from word list.")
+#             continue
+
+#         marks = []
+#         for i in range(5):
+#             if guess[i] == secret[i]:
+#                 marks.append("🟩")      # green
+#             elif guess[i] in secret:
+#                 marks.append("🟨")      # yellow
+#             else:
+#                 marks.append("⬜")      # gray
+#         print("   " + " ".join(marks))
+
+#         if guess == secret:
+#             print(f"You got it in {attempt} tries!")
+#             return
+#     print(f"Out of guesses! The word was: {secret}")
+
+
+# def guess_check(word, guess, marks: list[int]):
+#     for i, w in enumerate(marks):
+#         if w == 2 and word[i] != guess[i]:
+#             return False
+    
+#     for i, w in enumerate(marks):
+#         if w == 1:
+#             if word[i] == guess[i] or guess[i] not in word:
+#                 return False
+            
+#     positions = Counter(guess[i] for i, w in enumerate(marks) if w in (1,2))
+#     for i, w in enumerate(marks):
+#         if w == 0:
+#             letter = guess[i]
+#             if positions[letter] == 0 and letter in word:
+#                 return False
+            
+#     return True
+
