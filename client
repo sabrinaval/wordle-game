@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse, socket, ssl, json
 import random
-from collections import Counter
 
 def arg_parse():
     parsed = argparse.ArgumentParser(description="Wordle client")
@@ -24,12 +23,11 @@ def socket_connection(hostname, port, use_tls):
 
     return skt
 
-
-def send_json_msg(skt, obj, debug=False):
+def send_json_msg(skt, obj):
     data = json.dumps(obj, separators=(",", ":")) + "\n"
     skt.sendall(data.encode("ascii"))
 
-def receive_json_msg(skt, debug=False):
+def receive_json_msg(skt):
     buf = bytearray()
     while True:
         check = skt.recv(1)
@@ -40,26 +38,26 @@ def receive_json_msg(skt, debug=False):
         buf.extend(check)
     return json.loads(buf.decode("ascii"))
 
-
-def play(connection, user, words):
-    send_json_msg(connection, {"type": "hello", "northeastern_username": user})
-    start = receive_json_msg(connection)
+def play(hostname, user, port, tls, words):
+    skt = socket_connection(hostname, port, tls)
+    send_json_msg(skt, {"type": "hello", "northeastern_username": user})
+    start = receive_json_msg(skt)
     assert start["type"] == "start"
     game = start["id"]
 
     previous = []
     while True:
         guess = guess_next(previous, words)
-        send_json_msg(connection, {"type": "guess", "id": game, "word": guess})
+        send_json_msg(skt, {"type": "guess", "id": game, "word": guess})
 
-        response = receive_json_msg(connection)
+        response = receive_json_msg(skt)
         if response["type"] == "retry":
             previous = response["guesses"]
         elif response["type"] == "bye":
+            skt.close()
             return response["flag"]
         else:
-            raise RuntimeError("server error: " + str(response))
-
+            raise RuntimeError(f"server error: {response}")
 
 def find_marks(secret, guess):
     marks = [0] * 5
@@ -82,9 +80,20 @@ def guess_next(previous, words):
     if not previous:
         return random.choice(words)
     
-    possible = [w for w in words if all (guess_check(w, rec["word"], rec["marks"]) for rec in previous)]
+    possible = []
+    for w in words:
+        valid_word = True
+        for p in previous:
+            prev_guess = p["word"]
+            prev_marks = p["marks"]
+            if not guess_check(w, prev_guess, prev_marks):
+                valid_word = False
+                break
+        if valid_word:
+            possible.append(w)
     if not possible:
         raise RuntimeError("No possible word matches")
+    
     return random.choice(possible)
         
 def main():
@@ -95,18 +104,17 @@ def main():
     else:
         port = 27993
 
-    conn = socket_connection(arguments.hostname, port, arguments.use_tls)
+    skt = socket_connection(arguments.hostname, port, arguments.use_tls)
 
+    words_list = []
     with open("words.txt") as f:
-        words_list = [w.strip() for w in f if w.strip()]
+        for w in f:
+            word = w.strip()
+            words_list.append(word)
     
-
-    flag = play(conn, arguments.username, words_list)
+    flag = play(arguments.hostname, arguments.username, port, arguments.use_tls, words_list)
     print(flag)
-    conn.close()
-
-    with open("secret_flags", "a") as f:
-        f.write(flag + "\n")
+    skt.close()
 
 if __name__ == "__main__":
     main()
