@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+import argparse, socket, ssl, json
+import random
+from collections import Counter
+
+def arg_parse():
+    parsed = argparse.ArgumentParser(description="Wordle client")
+    parsed.add_argument("-p", type=int, help="server port")
+    parsed.add_argument("-s", action="store_true", dest="use_tls",
+                        help="use TLS implies default port 27994")
+    parsed.add_argument("hostname", help="proj1.4700.network")
+    parsed.add_argument("username", help="valerjev.s")
+    
+    return parsed.parse_args()
+
+def socket_connection(hostname, port, use_tls):
+    skt = socket.create_connection((hostname, port))
+    
+    if use_tls:
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        skt = ssl_context.wrap_socket(skt, server_hostname=hostname)
+
+    return skt
+
+
+def send_json_msg(skt, obj, debug=False):
+    data = json.dumps(obj, separators=(",", ":")) + "\n"
+    skt.sendall(data.encode("ascii"))
+
+def receive_json_msg(skt, debug=False):
+    buf = bytearray()
+    while True:
+        check = skt.recv(1)
+        if not check:
+            raise ConnectionError("Server closed connection")
+        if check == b"\n":
+            break
+        buf.extend(check)
+    return json.loads(buf.decode("ascii"))
+
+
+def play(connection, user, words):
+    send_json_msg(connection, {"type": "hello", "northeastern_username": user})
+    start = receive_json_msg(connection)
+    assert start["type"] == "start"
+    game = start["id"]
+
+    previous = []
+    while True:
+        guess = guess_next(previous, words)
+        send_json_msg(connection, {"type": "guess", "id": game, "word": guess})
+
+        response = receive_json_msg(connection)
+        if response["type"] == "retry":
+            previous = response["guesses"]
+        elif response["type"] == "bye":
+            return response["flag"]
+        else:
+            raise RuntimeError("server error: " + str(response))
+        
+
+# def get_random_word():
+#     with open("words.txt") as f:
+#         words = f.read().splitlines()
+#         return random.choice(words)
+    
+# def history():
+#     with open("words.txt") as f:
+#         words = f.read().splitlines()
+#     secret = get_random_word()
+#     for attempt in range(1, 501):
+#         guess = input(f"[{attempt}/6] Enter 5-letter guess: ").strip().lower()
+#         if len(guess) != 5 or guess not in words:
+#             print("  ↳ invalid guess; must be 5 lowercase letters from word list.")
+#             continue
+
+#         marks = []
+#         for i in range(5):
+#             if guess[i] == secret[i]:
+#                 marks.append("🟩")      # green
+#             elif guess[i] in secret:
+#                 marks.append("🟨")      # yellow
+#             else:
+#                 marks.append("⬜")      # gray
+#         print("   " + " ".join(marks))
+
+#         if guess == secret:
+#             print(f"You got it in {attempt} tries!")
+#             return
+#     print(f"Out of guesses! The word was: {secret}")
+
+def find_marks(secret, guess):
+    marks = [0] * 5
+    letters = list(secret)
+
+    for i in range(5):
+        if guess[i] == secret[i]:
+            marks[i] = 2
+            letters[i] = None
+    for i in range(5):
+        if marks[i] == 0 and guess[i] in letters:
+            marks[i] = 1
+            letters[letters.index(guess[i])] = None
+    return marks
+
+def guess_check(word, guess, marks):
+    return find_marks(word, guess) == marks
+
+# def guess_check(word, guess, marks: list[int]):
+#     for i, w in enumerate(marks):
+#         if w == 2 and word[i] != guess[i]:
+#             return False
+    
+#     for i, w in enumerate(marks):
+#         if w == 1:
+#             if word[i] == guess[i] or guess[i] not in word:
+#                 return False
+            
+#     positions = Counter(guess[i] for i, w in enumerate(marks) if w in (1,2))
+#     for i, w in enumerate(marks):
+#         if w == 0:
+#             letter = guess[i]
+#             if positions[letter] == 0 and letter in word:
+#                 return False
+            
+#     return True
+
+def guess_next(previous, words):
+    if not previous:
+        return random.choice(words)
+    
+    possible = [w for w in words if all (guess_check(w, rec["word"], rec["marks"]) for rec in previous)]
+    if not possible:
+        raise RuntimeError("No possible word matches")
+    return random.choice(possible)
+        
+def main():
+    arguments = arg_parse()
+
+    if arguments.use_tls:
+        port = 27994
+    else:
+        port = 27993
+
+    conn = socket_connection(arguments.hostname, port, arguments.use_tls)
+
+    with open("words.txt") as f:
+        words_list = [w.strip() for w in f if w.strip()]
+    
+
+    flag = play(conn, arguments.username, words_list)
+    print(flag)
+    conn.close()
+
+    with open("secret_flags", "a") as f:
+        f.write(flag + "\n")
+
+if __name__ == "__main__":
+    main()
