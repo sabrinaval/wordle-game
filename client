@@ -1,20 +1,50 @@
 #!/usr/bin/env python3
-import argparse, socket, ssl, json
+
+"""
+Wordle Client
+Connects with remote server to automatically solve Wordle game
+"""
+import argparse # library for adding arguments
+import socket   # socket library for creating connection
+import ssl      # helper library for TLS
+import json
 import random
 
 def arg_parse():
+    """
+    Parses and adds arguments in command line
+    
+    Returns:
+        parsed arguments with specified attributes:
+          - -p flag for default TCP port
+          - use_tls flag for enabling TLS
+          - server address as hostname
+          - username
+    """
     parsed = argparse.ArgumentParser(description="Wordle client")
     parsed.add_argument("-p", type=int, help="server port")
     parsed.add_argument("-s", action="store_true", dest="use_tls",
-                        help="use TLS implies default port 27994")
+                        help="use TLS uses port 27994")
     parsed.add_argument("hostname", help="proj1.4700.network")
     parsed.add_argument("username", help="valerjev.s")
     
     return parsed.parse_args()
 
 def socket_connection(hostname, port, use_tls):
-    skt = socket.create_connection((hostname, port))
+    """
+    Opens a TCP connection, either wrapped in TLS or default
     
+    Args:
+        hostname (str): server address
+        port (int): TCP port number (27993 or 27994)
+        
+    Returns:
+        skt (socket): connected socket
+    """
+    # create initial connection
+    skt = socket.create_connection((hostname, port))
+
+    # if tls is used, wrap socket
     if use_tls:
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
@@ -24,49 +54,103 @@ def socket_connection(hostname, port, use_tls):
     return skt
 
 def send_json_msg(skt, obj):
+    """
+    Sends a JSON message over the socket
+    
+    Args:
+        skt (socket): connected socket
+        obj (dict): data encoded to json and sent
+    """
+    # serializes to json format
     data = json.dumps(obj, separators=(",", ":")) + "\n"
     skt.sendall(data.encode("ascii"))
 
 def receive_json_msg(skt):
+    """
+    Reveives a JSON message and parses
+    
+    Args:
+        skt (socket): conencted socket
+    
+    Returns:
+        parsed JSON object
+    
+    Raises:
+        ConnectionError: raised if socket connection is lost
+    """
     buf = bytearray()
     while True:
-        check = skt.recv(1)
-        if not check:
+        chunk = skt.recv(1)
+        if not chunk:
             raise ConnectionError("Server closed connection")
-        if check == b"\n":
+        # on new line in message, break
+        if chunk == b"\n":
             break
-        buf.extend(check)
+        buf.extend(chunk)
     return json.loads(buf.decode("ascii"))
 
 def play(hostname, user, port, tls, words):
+    """
+    Executes Wordle game messages, including secret flag
+    
+    Args:
+        hostname (str): server address
+        user (str): NEU username
+        port (int): TCP port (either 27993 or 27994)
+        tls (bool): TLS is used or not
+        words (list[str]): list of 5-letter words
+        
+    Returns:
+        secret flag, either default or TLS version
+    
+    Raises:
+        RuntimeError: guesses ran too long
+    """
+    # start socket connection
     skt = socket_connection(hostname, port, tls)
+    # send first message
     send_json_msg(skt, {"type": "hello", "northeastern_username": user})
     start = receive_json_msg(skt)
     assert start["type"] == "start"
+    # initialize game id
     game = start["id"]
 
+    # keeps track of previous guesses
     previous = []
     while True:
         guess = guess_next(previous, words)
         send_json_msg(skt, {"type": "guess", "id": game, "word": guess})
 
+        # responses for each type of result
         response = receive_json_msg(skt)
         if response["type"] == "retry":
             previous = response["guesses"]
         elif response["type"] == "bye":
-            skt.close()
+            skt.close() # closes socket connection
             return response["flag"]
         else:
             raise RuntimeError(f"server error: {response}")
 
 def find_marks(secret, guess):
+    """
+    Build Wordle feedback per guess
+    
+    Args:
+        secret (str): the secret target word
+        guess (str): the guessed word
+        
+    Returns:
+        marks (list[int]): the feedback marks for each letter position
+    """
     marks = [0] * 5
     letters = list(secret)
 
+    # if letter is correct
     for i in range(5):
         if guess[i] == secret[i]:
             marks[i] = 2
             letters[i] = None
+    # if letter is in word, but not correct position
     for i in range(5):
         if marks[i] == 0 and guess[i] in letters:
             marks[i] = 1
@@ -74,47 +158,85 @@ def find_marks(secret, guess):
     return marks
 
 def guess_check(word, guess, marks):
+    """
+    Checks if possible word ends up with same result as past guess
+    
+    Args:
+        word (str): possible word to test
+        guess (str): past guessed word
+        marks (list[int]): feedback marks returned
+        
+    Returns:
+        True if marks match the same, False if not
+    """
     return find_marks(word, guess) == marks
 
 def guess_next(previous, words):
+    """
+    Choose next guess by filtering words based on
+    previous feedback accumulated
+    
+    Args:
+        previous (list[dict]): list of previous guesses with:
+            - word: str
+            - marks: list[int]
+        words (list[str]): list of valid candidate words
+        
+    Returns:
+        next word to guess (selects random from valid options)
+        
+    Raises:
+        RuntimeError: raised when no valid options remain
+    """
+    # makes random first guess
     if not previous:
         return random.choice(words)
     
+    # filters rest of options to find valid candidates
     possible = []
     for w in words:
         valid_word = True
         for p in previous:
             prev_guess = p["word"]
             prev_marks = p["marks"]
+            # checks if marks match to previous guesses
             if not guess_check(w, prev_guess, prev_marks):
                 valid_word = False
                 break
+        # valid, adds to list
         if valid_word:
             possible.append(w)
     if not possible:
         raise RuntimeError("No possible word matches")
     
+    # returns randomly selected candidate
     return random.choice(possible)
-        
+     
 def main():
     arguments = arg_parse()
 
+    # depending on which flag used
     if arguments.use_tls:
         port = 27994
     else:
         port = 27993
 
+    # creates socket connection
     skt = socket_connection(arguments.hostname, port, arguments.use_tls)
 
+    # loads words from file, line by line
     words_list = []
     with open("words.txt") as f:
         for w in f:
+            # strip to ensure no trailing spaces or new lines
             word = w.strip()
             words_list.append(word)
-    
+    # plays and prints flag
     flag = play(arguments.hostname, arguments.username, port, arguments.use_tls, words_list)
     print(flag)
+    # closes socket connection
     skt.close()
 
+# running main
 if __name__ == "__main__":
     main()
