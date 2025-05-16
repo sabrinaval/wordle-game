@@ -19,7 +19,7 @@
    - Randomly selects one of the remaining valid candidates from the curated list
 
 ## Challenges Faced
-
+Some challenges faced consisted of getting the socket connection to work, and to correctly account for TLS use. I did this by wrapping the plain socket in an SSL context  
 
 
 
